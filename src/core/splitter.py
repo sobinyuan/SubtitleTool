@@ -41,7 +41,7 @@ class SubtitleSplitter:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "system", "content": "You are a helpful assistant now."},
                 {"role": "user", "content": "Hello!"}
             ],
             max_tokens=100,

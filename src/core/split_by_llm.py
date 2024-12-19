@@ -3,16 +3,16 @@ import json
 import os
 import re
 from typing import List, Optional
-
 import openai
 import retry
+
+
 
 from .subtitle_config import SPLIT_SYSTEM_PROMPT
 from ..utils.logger import setup_logger
 
 logger = setup_logger("split_by_llm")
 
-MAX_WORD_COUNT = 20  # 英文单词或中文字符的最大数量
 CACHE_DIR = "cache"
 
 def count_words(text: str) -> int:
@@ -60,6 +60,33 @@ def set_cache(text: str, model: str, result: List[str]) -> None:
     except IOError:
         pass
 
+def is_mainly_cjk(text: str) -> bool:
+    """
+    判断文本是否主要由中日韩文字组成
+
+    Args:
+        text: 输入文本
+    Returns:
+        bool: 如果CJK字符占比超过50%则返回True
+    """
+    # 定义CJK字符的Unicode范围
+    cjk_patterns = [
+        r'[\u4e00-\u9fff]',           # 中日韩统一表意文字
+        r'[\u3040-\u309f]',           # 平假名
+        r'[\u30a0-\u30ff]',           # 片假名
+        r'[\uac00-\ud7af]',           # 韩文音节
+    ]
+
+    # 计算CJK字符数
+    cjk_count = 0
+    for pattern in cjk_patterns:
+        cjk_count += len(re.findall(pattern, text))
+
+    # 计算总字符数（不包括空白字符）
+    total_chars = len(''.join(text.split()))
+
+    # 如果CJK字符占比超过50%，则认为主要是CJK文本
+    return cjk_count / total_chars > 0.5 if total_chars > 0 else False
 
 def split_by_llm(text: str,
                  model: str = "gpt-4o-mini",
@@ -75,7 +102,7 @@ def split_by_llm(text: str,
         logger.error(f"断句失败: {e}")
         return [text]
 
-@retry.retry(tries=2)
+@retry.retry(tries=5)
 def split_by_llm_retry(text: str,
                        model: str = "gpt-4o-mini",
                        use_cache: bool = False,
@@ -86,7 +113,7 @@ def split_by_llm_retry(text: str,
     """
     system_prompt = SPLIT_SYSTEM_PROMPT.replace("[max_word_count_cjk]", str(max_word_count_cjk))
     system_prompt = system_prompt.replace("[max_word_count_english]", str(max_word_count_english))
-    user_prompt = f"Please use multiple <br> tags to separate the following sentence:\n{text}"
+    user_prompt = f"Each segment you separate must not exceed {max_word_count_cjk} words for Chinese, Japanese, or other Asian languages, and {max_word_count_english} words for English. Please use multiple <br> tags to separate the following subtitle:\n{text}"
 
     if use_cache:
         cached_result = get_cache(system_prompt+user_prompt, model)
@@ -106,13 +133,15 @@ def split_by_llm_retry(text: str,
     )
     result = response.choices[0].message.content
 
-    # print(f"断句结果: {result}")
+    print(f"断句结果: {result}")
     # 清理结果中的多余换行符
     result = re.sub(r'\n+', '', result)
     split_result = [segment.strip() for segment in result.split("<br>") if segment.strip()]
 
     br_count = len(split_result)
-    if br_count < count_words(text) / MAX_WORD_COUNT * 0.9:
+    max_word_count = max_word_count_cjk if is_mainly_cjk(text) else max_word_count_english
+    if br_count < count_words(text) / max_word_count * 0.9:
+        logger.error("断句失败："+text)
         raise Exception("断句失败")
     set_cache(system_prompt+user_prompt, model, split_result)
     return split_result

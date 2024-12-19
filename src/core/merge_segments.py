@@ -11,23 +11,12 @@ from ..utils.logger import setup_logger
 
 logger = setup_logger("merge_segments")
 load_dotenv()
-SEGMENT_THRESHOLD = 500  # 每个分段的最大字数
+SEGMENT_THRESHOLD = 1000  # 每个分段的最大字数
 SPLIT_RANGE = 30  # 在分割点前后寻找最大时间间隔的范围
 USE_CACHE = True  # 是否使用缓存
 MAX_GAP = 1500  # 允许每个词语之间的最大时间间隔 ms
-MAX_WORD_COUNT_ENGLISH = int(os.getenv('MAX_WORD_COUNT_ENGLISH', '12'))  # 英文最大单词数
-MAX_WORD_COUNT_CJK = int(os.getenv('MAX_WORD_COUNT_CJK', '12'))     # 中日韩文字最大字数
-SPLIT_SYSTEM_PROMPT = """你是一个专业的字幕断句助手。你的任务是将一段文字按照自然语言习惯重新组织成多个句子。
-
-要求：
-1. 每个句子要符合语言的自然表达习惯
-2. 中文句子不超过{max_word_count_cjk}个字，英文句子不超过{max_word_count_english}个单词
-3. 尽量在自然的停顿处断句
-4. 保持句子的完整性，不要在句子中间断开
-5. 返回JSON格式：["句子1", "句子2",...]
-
-输入文本是按照时间顺序排列的，请保持顺序不变。"""
-
+MAX_WORD_COUNT_ENGLISH = int(os.getenv('MAX_WORD_COUNT_ENGLISH', '20'))  # 英文最大单词数
+MAX_WORD_COUNT_CJK = int(os.getenv('MAX_WORD_COUNT_CJK', '20'))     # 中日韩文字最大字数
 
 class SubtitleProcessError(Exception):
     """字幕处理相关的异常"""
@@ -170,11 +159,11 @@ def split_asr_data(asr_data: ASRData, num_segments: int) -> List[ASRData]:
         segments.append(part)
     return segments
 
-def preprocess_text(s: str) -> str:
+def preprocess_text(s: str, space: str) -> str:
     """
     通过转换为小写并规范化空格来标准化文本
     """
-    return ' '.join(s.lower().split())
+    return space.join(s.lower().split())
 
 def merge_by_time_gaps(segments: List[ASRDataSeg], max_gap: int = MAX_GAP, check_large_gaps: bool = False) -> List[List[ASRDataSeg]]:
     """
@@ -207,13 +196,13 @@ def merge_by_time_gaps(segments: List[ASRDataSeg], max_gap: int = MAX_GAP, check
                 avg_gap = sum(recent_gaps) / len(recent_gaps)
                 # 如果当前间隔大于平均值的3倍
                 if time_gap > avg_gap*3 and len(current_group) > 5:
-                    logger.debug(f"检测到大间隔: {time_gap}ms, 平均间隔: {avg_gap}ms")
+                    # logger.debug(f"检测到大间隔: {time_gap}ms, 平均间隔: {avg_gap}ms")
                     result.append(current_group)
                     current_group = []
                     recent_gaps = []  # 重置间隔记录
 
         if time_gap > max_gap:
-            logger.debug(f"超过阈值，分组: {''.join(seg.text for seg in current_group)}")
+            # logger.debug(f"超过阈值，分组: {''.join(seg.text for seg in current_group)}")
             result.append(current_group)
             current_group = []
             recent_gaps = []  # 重置间隔记录
@@ -301,10 +290,10 @@ def split_long_segment(segs_to_merge: List[ASRDataSeg]) -> List[ASRDataSeg]:
 
     first_segs = segs_to_merge[:split_index + 1]
     second_segs = segs_to_merge[split_index + 1:]
-    logger.debug(f"分段1: {''.join(seg.text for seg in first_segs)}")
-    logger.debug(f"分段2: {''.join(seg.text for seg in second_segs)}")
-    logger.debug(f"-------")
-    # 递归拆分
+    # logger.debug(f"分段1: {''.join(seg.text for seg in first_segs)}")
+    # logger.debug(f"分段2: {''.join(seg.text for seg in second_segs)}")
+    # logger.debug(f"-------")
+    # # 递归拆分
     result_segs.extend(split_long_segment(first_segs))
     result_segs.extend(split_long_segment(second_segs))
 
@@ -338,11 +327,14 @@ def merge_segments_based_on_sentences(segments: List[ASRDataSeg], sentences: Lis
     # logger.debug(f"ASR分段: {asr_texts}")
 
     for sentence in sentences:
-        logger.debug(f"==========")
-        logger.debug(f"处理句子: {sentence}")
-        logger.debug("后续句子:" + "".join(asr_texts[asr_index: asr_index+10]))
+        # logger.debug(f"==========")
+        # logger.debug(f"处理句子: {sentence}")
+        # logger.debug("后续句子:" + "".join(asr_texts[asr_index: asr_index+10]))
 
-        sentence_proc = preprocess_text(sentence)
+        sentence_proc = preprocess_text(sentence,' ')
+        # if sentence == 'I mean, Vanessa: Mountain':
+        #     logger.debug("检测到句子: I mean, Vanessa: Mountain")
+
         word_count = count_words(sentence_proc)
         best_ratio = 0.0
         best_pos = None
@@ -358,8 +350,8 @@ def merge_segments_based_on_sentences(segments: List[ASRDataSeg], sentences: Lis
             max_start = min(asr_index + max_shift + 1, asr_len - window_size + 1)
             for start in range(asr_index, max_start):
                 substr = ''.join(asr_texts[start:start + window_size])
-                substr_proc = preprocess_text(substr)
-                ratio = difflib.SequenceMatcher(None, sentence_proc, substr_proc).ratio()
+                substr_proc = preprocess_text(substr,'')
+                ratio = difflib.SequenceMatcher(None, ''.join(sentence_proc.split()), substr_proc).ratio()
                 # logger.debug(f"-----")
                 # logger.debug(f"sentence_proc: {sentence_proc}, substr_proc: {substr_proc}, ratio: {ratio}")
 
@@ -373,6 +365,7 @@ def merge_segments_based_on_sentences(segments: List[ASRDataSeg], sentences: Lis
                 break  # 完全匹配
 
         if best_ratio >= threshold and best_pos is not None:
+            logger.debug(f"匹配到句子: {sentence}, ratio: {best_ratio}")
             start_seg_index = best_pos
             end_seg_index = best_pos + best_window_size - 1
 
@@ -388,7 +381,7 @@ def merge_segments_based_on_sentences(segments: List[ASRDataSeg], sentences: Lis
                 merged_end_time = group[-1].end_time
                 merged_seg = ASRDataSeg(merged_text, merged_start_time, merged_end_time)
 
-                logger.debug(f"合并分段: {merged_seg.text}")
+                # logger.debug(f"合并分段: {merged_seg.text}")
 
                 # 考虑最大词数的拆分
                 split_segs = split_long_segment(group)
@@ -578,7 +571,7 @@ def merge_short_segment(segments: List[ASRDataSeg]) -> None:
 
         if time_gap < 300 and (current_words < 5 or next_words <= 5) and total_words <= max_word_count:
             # 执行合并操作
-            logger.debug(f"优化：合并相邻分段: {current_seg.text} --- {next_seg.text} -> {time_gap}")
+            # logger.debug(f"优化：合并相邻分段: {current_seg.text} --- {next_seg.text} -> {time_gap}")
 
             # 更新当前段落的文本和结束时间
             current_seg.text = current_seg.text + " " + next_seg.text
@@ -606,8 +599,8 @@ def merge_segments(asr_data: ASRData, model: str, num_threads: int = 5,
     """
     # 预处理ASR数据，移除纯标点符号的分段，并处理仅包含字母和撇号的文本
     asr_data.segments = preprocess_segments(asr_data.segments, need_lower=False)
-    txt = asr_data.to_txt().replace("\n", "")
-    total_word_count = count_words(txt)
+    # txt = asr_data.to_txt().replace("\n", "")
+    total_word_count = count_words(asr_data.to_txt())
 
     # 确定分段数，分割ASRData
     num_segments = determine_num_segments(total_word_count, threshold=SEGMENT_THRESHOLD)

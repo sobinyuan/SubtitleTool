@@ -95,6 +95,7 @@ class ASRData:
         """
         将当前ASRData中的每个segment按字词分割，并按音素计算时间戳
         每4个字符视为一个音素单位进行时间分配
+        标点符号会与前面的词语合并在一起
 
         Returns:
             ASRData: 包含分割后字词级别segments的新ASRData实例
@@ -106,36 +107,40 @@ class ASRData:
             text = seg.text
             duration = seg.end_time - seg.start_time
 
-            # 匹配所有有效字符（包括数字）
-            pattern = r'[a-zA-Z\']+|\d+|[\u4e00-\u9fff]|[\u3040-\u309f]|[\u30a0-\u30ff]|[\uac00-\ud7af]|[\u0e00-\u0e7f]|[\u0600-\u06ff]|[\u0400-\u04ff]|[\u0590-\u05ff]|[\u1e00-\u1eff]|[\u3130-\u318f]'
-            words = re.finditer(pattern, text)
-            words_list = list(words)
+            # 修改正则表达式，将标点符号作为单独的捕获组
+            pattern = r'([a-zA-Z\']+|\d+|[\u4e00-\u9fff]|[\u3040-\u309f]|[\u30a0-\u30ff]|[\uac00-\ud7af]|[\u0e00-\u0e7f]|[\u0600-\u06ff]|[\u0400-\u04ff]|[\u0590-\u05ff]|[\u1e00-\u1eff]|[\u3130-\u318f])([.,!?;:，。！？；：]*)'
+            matches = list(re.finditer(pattern, text))
 
-            if not words_list:
+            if not matches:
                 continue
 
-            # 计算总音素数
-            total_phonemes = sum(math.ceil(len(w.group()) / CHARS_PER_PHONEME) for w in words_list)
-            time_per_phoneme = duration / max(total_phonemes, 1)  # 防止除零
+            # 计算总音素数（包括标点符号）
+            total_phonemes = sum(math.ceil((len(m.group(1)) + len(m.group(2))) / CHARS_PER_PHONEME) for m in matches)
+            time_per_phoneme = duration / max(total_phonemes, 1)
 
             current_time = seg.start_time
-            for word_match in words_list:
-                word = word_match.group()
-                # 计算当前词的音素数
-                word_phonemes = math.ceil(len(word) / CHARS_PER_PHONEME)
+            for match in matches:
+                word = match.group(1)
+                punctuation = match.group(2)
+
+                # 将词和后面的标点合并
+                complete_word = word + punctuation
+
+                # 计算当前词（包含标点）的音素数
+                word_phonemes = math.ceil(len(complete_word) / CHARS_PER_PHONEME)
                 word_duration = int(time_per_phoneme * word_phonemes)
 
                 # 创建新的字词级segment
                 word_end_time = min(current_time + word_duration, seg.end_time)
                 new_segments.append(ASRDataSeg(
-                    text=word,
+                    text=complete_word,
                     start_time=current_time,
                     end_time=word_end_time
                 ))
 
                 current_time = word_end_time
 
-        self.segments = new_segments
+            self.segments = new_segments
 
 
     def save(self, save_path: str, ass_style: str = None, layout: str = "原文在上") -> None:
