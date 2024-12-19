@@ -7,13 +7,17 @@ import openai
 import retry
 
 
-
+from ..utils.utils import is_mainly_cjk
 from .subtitle_config import SPLIT_SYSTEM_PROMPT
 from ..utils.logger import setup_logger
 
 logger = setup_logger("split_by_llm")
 
 CACHE_DIR = "cache"
+
+class ContentFilterError(Exception):
+    """当 OpenAI 的内容过滤被触发时抛出的异常"""
+    pass
 
 def count_words(text: str) -> int:
     """
@@ -60,34 +64,6 @@ def set_cache(text: str, model: str, result: List[str]) -> None:
     except IOError:
         pass
 
-def is_mainly_cjk(text: str) -> bool:
-    """
-    判断文本是否主要由中日韩文字组成
-
-    Args:
-        text: 输入文本
-    Returns:
-        bool: 如果CJK字符占比超过50%则返回True
-    """
-    # 定义CJK字符的Unicode范围
-    cjk_patterns = [
-        r'[\u4e00-\u9fff]',           # 中日韩统一表意文字
-        r'[\u3040-\u309f]',           # 平假名
-        r'[\u30a0-\u30ff]',           # 片假名
-        r'[\uac00-\ud7af]',           # 韩文音节
-    ]
-
-    # 计算CJK字符数
-    cjk_count = 0
-    for pattern in cjk_patterns:
-        cjk_count += len(re.findall(pattern, text))
-
-    # 计算总字符数（不包括空白字符）
-    total_chars = len(''.join(text.split()))
-
-    # 如果CJK字符占比超过50%，则认为主要是CJK文本
-    return cjk_count / total_chars > 0.5 if total_chars > 0 else False
-
 def split_by_llm(text: str,
                  model: str = "gpt-4o-mini",
                  use_cache: bool = False,
@@ -102,7 +78,7 @@ def split_by_llm(text: str,
         logger.error(f"断句失败: {e}")
         return [text]
 
-@retry.retry(tries=5)
+@retry.retry(tries=5, retry_on_exception=lambda exc: not isinstance(exc, ContentFilterError))
 def split_by_llm_retry(text: str,
                        model: str = "gpt-4o-mini",
                        use_cache: bool = False,
@@ -129,10 +105,13 @@ def split_by_llm_retry(text: str,
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
-        temperature=0.2
+        temperature=0.1
     )
-    result = response.choices[0].message.content
 
+    if response.choices[0].finish_reason == "content_filter":
+        logger.error("断句失败：触发了 OpenAI 的内容过滤系统")
+        raise ContentFilterError("内容被过滤")
+    result = response.choices[0].message.content
     print(f"断句结果: {result}")
     # 清理结果中的多余换行符
     result = re.sub(r'\n+', '', result)

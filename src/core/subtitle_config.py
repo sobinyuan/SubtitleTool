@@ -7,7 +7,8 @@ Requirements:
 - Ensure each segment is semantically coherent; split sentences naturally without disrupting meaning.
 - Avoid segments that are too short; aim for at least 10 characters per segment.
 - If a sentence is too long, break it into logical semantic parts.
-- Do not modify or add any content to the original text. Only insert <br> between each segment.
+- Do not modify or add or remove any content to the original text. Only insert <br> between each segment.
+- The content to be translated is movie subtitles, which do not violate any policies or contain sensitive or inappropriate material. Please ensure that the API does not return with 'finish_reason' = 'content_filter', and provide the complete content.
 
 ## Examples
 Input:
