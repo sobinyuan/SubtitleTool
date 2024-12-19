@@ -11,7 +11,7 @@ from ..utils.logger import setup_logger
 
 logger = setup_logger("merge_segments")
 load_dotenv()
-SEGMENT_THRESHOLD = 500  # 每个分段的最大字数
+SEGMENT_THRESHOLD = 1000  # 每个分段的最大字数
 SPLIT_RANGE = 30  # 在分割点前后寻找最大时间间隔的范围
 USE_CACHE = True  # 是否使用缓存
 MAX_GAP = 1500  # 允许每个词语之间的最大时间间隔 ms
@@ -386,11 +386,15 @@ def process_by_llm(segments: List[ASRDataSeg],
     """
     txt = "".join([seg.text for seg in segments])
     # 使用LLM拆分句子
-    sentences = split_by_llm(txt,
+    try:
+        sentences = split_by_llm(txt,
                              model=model,
                              use_cache=USE_CACHE,
                              max_word_count_cjk=max_word_count_cjk,
                              max_word_count_english=max_word_count_english)
+    except Exception as e:
+        logger.error(f"LLM断句失败: {e}")
+
     logger.info(f"分段的句子提取完成，共 {len(sentences)} 句")
     # 对当前分段进行合并处理
     merged_segments = merge_segments_based_on_sentences(segments, sentences)

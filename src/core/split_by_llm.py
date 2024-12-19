@@ -15,10 +15,6 @@ logger = setup_logger("split_by_llm")
 
 CACHE_DIR = "cache"
 
-class ContentFilterError(Exception):
-    """当 OpenAI 的内容过滤被触发时抛出的异常"""
-    pass
-
 def count_words(text: str) -> int:
     """
     统计混合文本中英文单词数和中文字符数的总和
@@ -78,7 +74,7 @@ def split_by_llm(text: str,
         logger.error(f"断句失败: {e}")
         return [text]
 
-@retry.retry(tries=5, retry_on_exception=lambda exc: not isinstance(exc, ContentFilterError))
+@retry.retry(tries=2)
 def split_by_llm_retry(text: str,
                        model: str = "gpt-4o-mini",
                        use_cache: bool = False,
@@ -110,7 +106,8 @@ def split_by_llm_retry(text: str,
 
     if response.choices[0].finish_reason == "content_filter":
         logger.error("断句失败：触发了 OpenAI 的内容过滤系统")
-        raise ContentFilterError("内容被过滤")
+        raise Exception("断句失败")
+    
     result = response.choices[0].message.content
     print(f"断句结果: {result}")
     # 清理结果中的多余换行符
